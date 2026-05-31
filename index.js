@@ -1380,6 +1380,12 @@ export class ProxmoxServer {
           output += `   • Uptime: ${uptime}\n`;
           output += `   • CPU: ${cpuUsage}\n`;
           output += `   • Memory: ${memUsage}\n`;
+          if (vm.maxdisk) {
+            output += `   • Root FS: ${this.formatBytes(vm.disk || 0)} / ${this.formatBytes(vm.maxdisk)} (${(((vm.disk || 0) / vm.maxdisk) * 100).toFixed(1)}%)\n`;
+          }
+          if (vm.maxswap) {
+            output += `   • Swap: ${this.formatBytes(vm.swap || 0)} / ${this.formatBytes(vm.maxswap)} (${(((vm.swap || 0) / vm.maxswap) * 100).toFixed(1)}%)\n`;
+          }
         }
         output += '\n';
       }
@@ -1409,8 +1415,14 @@ export class ProxmoxServer {
     if (vmStatus.status === 'running') {
       output += `• **Uptime**: ${vmStatus.uptime ? this.formatUptime(vmStatus.uptime) : 'N/A'}\n`;
       output += `• **CPU Usage**: ${vmStatus.cpu ? `${(vmStatus.cpu * 100).toFixed(1)}%` : 'N/A'}\n`;
-      output += `• **Memory**: ${vmStatus.mem && vmStatus.maxmem ? 
+      output += `• **Memory**: ${vmStatus.mem && vmStatus.maxmem ?
         `${this.formatBytes(vmStatus.mem)} / ${this.formatBytes(vmStatus.maxmem)} (${((vmStatus.mem / vmStatus.maxmem) * 100).toFixed(1)}%)` : 'N/A'}\n`;
+      if (vmStatus.maxdisk) {
+        output += `• **Root FS**: ${this.formatBytes(vmStatus.disk || 0)} / ${this.formatBytes(vmStatus.maxdisk)} (${((( vmStatus.disk || 0) / vmStatus.maxdisk) * 100).toFixed(1)}%)\n`;
+      }
+      if (vmStatus.maxswap) {
+        output += `• **Swap**: ${this.formatBytes(vmStatus.swap || 0)} / ${this.formatBytes(vmStatus.maxswap)} (${(((vmStatus.swap || 0) / vmStatus.maxswap) * 100).toFixed(1)}%)\n`;
+      }
       output += `• **Disk Read**: ${vmStatus.diskread ? this.formatBytes(vmStatus.diskread) : 'N/A'}\n`;
       output += `• **Disk Write**: ${vmStatus.diskwrite ? this.formatBytes(vmStatus.diskwrite) : 'N/A'}\n`;
       output += `• **Network In**: ${vmStatus.netin ? this.formatBytes(vmStatus.netin) : 'N/A'}\n`;
