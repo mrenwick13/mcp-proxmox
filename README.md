@@ -93,14 +93,20 @@ Before starting, ensure you have:
    # Only enable if you understand the security implications!
 
    # Optional Settings (can be omitted)
-   # PROXMOX_PORT=8006  # Defaults to 8006
+   # PROXMOX_PORT=8006              # Defaults to 8006
+   # PROXMOX_VERIFY_SSL=true        # Defaults to true. Set to 'false' to accept self-signed certificates
+   # PROXMOX_ALLOW_SELF_SIGNED=false  # Legacy-compatible alias: 'true' disables TLS verification
+   # PROXMOX_TIMEOUT_MS=30000       # API request timeout in milliseconds (default 30000)
    ```
 
    **Important Notes**:
    - The `.env` file MUST be placed in the parent directory of the `mcp-proxmox` installation
+   - Real environment variables take precedence over values in the `.env` file
+   - `PROXMOX_HOST` is REQUIRED - there is no default value
    - `PROXMOX_TOKEN_VALUE` is REQUIRED - there is no default value
-   - `PROXMOX_HOST` defaults to `192.168.6.247` if not specified (change this!)
+   - `PROXMOX_USER` must be `user@realm` only (e.g. `root@pam`), with no `!` - the token name goes in `PROXMOX_TOKEN_NAME`
    - `PROXMOX_TOKEN_NAME` defaults to `mcpserver` if not specified
+   - TLS certificate verification is ON by default. For self-signed Proxmox certificates set `PROXMOX_VERIFY_SSL=false` (a warning is logged at startup)
 
    **⚠️ Security Warning**:
    - `PROXMOX_ALLOW_ELEVATED=false` is the SAFE default - only read operations allowed
@@ -115,16 +121,18 @@ Before starting, ensure you have:
 
 **Basic Mode** (`PROXMOX_ALLOW_ELEVATED=false`):
 - List cluster nodes and their status
+- Detailed node resource metrics
 - List VMs and containers
 - View storage pools
 - Basic cluster health overview
-- Requires minimal API token permissions
+- List snapshots and backups
+- Check task status and logs (proxmox_get_task_status / proxmox_get_task_log)
+- Requires minimal API token permissions (read-only calls may still need Sys.Audit / VM.Audit / Datastore.Audit on the token)
 
 **Elevated Mode** (`PROXMOX_ALLOW_ELEVATED=true`):
 - ⚠️ **WARNING: Enables destructive operations** - Use with caution!
 - All basic features plus:
-- Detailed node resource metrics
-- VM command execution
+- VM command execution (QEMU guest agent only)
 - Advanced cluster statistics
 - **Create/Delete VMs and containers** (requires `VM.Allocate`)
 - **Start/Stop/Reboot/Shutdown** (requires `VM.PowerMgmt`)
@@ -204,14 +212,14 @@ Add the configuration to your Claude Desktop config file:
 
 **Important - Environment File Location**:
 - Replace `/absolute/path/to/mcp-proxmox` with the actual path to your installation
-- The server loads environment variables from `../../.env` relative to `index.js`
+- The server loads environment variables from `../.env` relative to `index.js`
 - **This means**: If your installation is at `/home/user/mcp-proxmox`, place `.env` at `/home/user/.env`
 - **Example directory structure**:
   ```
   /home/user/
   ├── .env                 ← Environment file goes here
   └── mcp-proxmox/
-      ├── index.js         ← Server looks for ../../.env from here
+      ├── index.js         ← Server looks for ../.env from here
       ├── package.json
       └── README.md
   ```
@@ -250,18 +258,23 @@ For Claude Code, MCP Inspector, or other MCP clients, use the stdio transport co
 
 # 🔧 Available Tools
 
-The server provides 55 MCP tools for interacting with Proxmox:
+The server provides 58 MCP tools for interacting with Proxmox:
 
 **Read-Only Tools** (Basic Mode):
 - `proxmox_get_nodes` - List cluster nodes
+- `proxmox_get_node_status` - Detailed node metrics
 - `proxmox_get_vms` - List all VMs and containers
 - `proxmox_get_vm_status` - Get VM details
 - `proxmox_get_storage` - View storage pools
 - `proxmox_get_cluster_status` - Cluster overview
+- `proxmox_list_snapshots_lxc` / `proxmox_list_snapshots_vm` - List snapshots
+- `proxmox_list_backups` - List all backups on storage
+- `proxmox_get_task_status` - Check a task (UPID) for completion
+- `proxmox_get_task_log` - Fetch a task's log
+- `proxmox_get_exec_status` - Fetch exit code and output of a guest-agent command
 
 **Advanced Tools** (Elevated Mode):
-- `proxmox_get_node_status` - Detailed node metrics
-- `proxmox_execute_vm_command` - Run commands in VMs
+- `proxmox_execute_vm_command` - Run commands in QEMU VMs via the guest agent (LXC is not supported by the Proxmox API)
 - `proxmox_list_templates` - List LXC templates
 - `proxmox_get_next_vmid` - Get next available VM/Container ID
 - `proxmox_create_lxc` - Create LXC container
@@ -274,11 +287,9 @@ The server provides 55 MCP tools for interacting with Proxmox:
 - `proxmox_clone_lxc` / `proxmox_clone_vm` - Clone container/VM
 - `proxmox_resize_lxc` / `proxmox_resize_vm` - Resize container/VM resources
 - `proxmox_create_snapshot_lxc` / `proxmox_create_snapshot_vm` - Create snapshot
-- `proxmox_list_snapshots_lxc` / `proxmox_list_snapshots_vm` - List snapshots
 - `proxmox_rollback_snapshot_lxc` / `proxmox_rollback_snapshot_vm` - Rollback to snapshot
 - `proxmox_delete_snapshot_lxc` / `proxmox_delete_snapshot_vm` - Delete snapshot
 - `proxmox_create_backup_lxc` / `proxmox_create_backup_vm` - Create backup
-- `proxmox_list_backups` - List all backups on storage
 - `proxmox_restore_backup_lxc` / `proxmox_restore_backup_vm` - Restore from backup
 - `proxmox_delete_backup` - Delete backup file
 - `proxmox_add_disk_vm` - Add disk to QEMU VM
@@ -413,13 +424,13 @@ Get overall cluster status including nodes and resource usage.
   ```
 
 ### proxmox_execute_vm_command
-Execute a shell command on a virtual machine via Proxmox API (requires elevated permissions).
+Execute a shell command on a QEMU virtual machine via the QEMU guest agent (requires elevated permissions). Returns a PID; use `proxmox_get_exec_status` with that PID to fetch the exit code and output.
 
 - Parameters:
   - `node` (string, required): Node name where VM is located
   - `vmid` (string, required): VM ID number
   - `command` (string, required): Shell command to execute
-  - `type` (string, optional): VM type ('qemu', 'lxc'), default: 'qemu'
+  - `type` (string, optional): VM type, default: 'qemu'. Only 'qemu' is supported: the Proxmox REST API has no LXC exec endpoint (`pct exec` is CLI-only), so `type: 'lxc'` returns an error suggesting `pct exec <vmid> -- <command>` on the node shell
 - Example Response (Basic Mode):
   ```
   ⚠️  **VM Command Execution Requires Elevated Permissions**
@@ -432,9 +443,9 @@ Execute a shell command on a virtual machine via Proxmox API (requires elevated 
   ```
 - Requirements (Elevated Mode):
   - VM must be running
-  - For QEMU: QEMU Guest Agent must be installed and running
-  - For LXC: Direct execution via Proxmox API
+  - QEMU Guest Agent must be installed and running in the VM
   - Appropriate API token permissions
+- Note: LXC containers are not supported (no API endpoint); use `pct exec` on the node shell instead
 
 ### proxmox_list_templates
 List available LXC container templates on a storage.
@@ -1111,7 +1122,7 @@ Move a disk/volume to different storage (requires elevated permissions).
   - `vmid` (string, required): VM/Container ID number
   - `disk` (string, required): Disk identifier (e.g., 'scsi0', 'rootfs', 'mp0')
   - `storage` (string, required): Target storage name
-  - `delete` (boolean, optional): Delete source after move, default: true
+  - `delete` (boolean, optional): Delete source after move, default: false (source is kept, matching the Proxmox default)
 - **Note**: Use `proxmox_move_disk_vm` for VMs, `proxmox_move_disk_lxc` for containers
 - Example Response:
   ```
@@ -1396,7 +1407,7 @@ echo '{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "pr
 
 ### Development Notes
 
-- The server loads environment variables from `../../.env` relative to `index.js`
+- The server loads environment variables from `../.env` relative to `index.js`
 - Place `.env` file in the parent directory of your `mcp-proxmox` installation
 - Use `npm run dev` for development with auto-reload on file changes
 - All API calls require a proper `.env` configuration
